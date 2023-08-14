@@ -155,7 +155,7 @@ def main():
     # 随机打乱
     np.random.shuffle(train_path)
     np.random.shuffle(test_path)
-    batch_size = 2
+    batch_size = 4
     # 训练集dataloader
     train_loader = torch.utils.data.DataLoader(
         NiiDataset(train_path,
@@ -166,7 +166,7 @@ def main():
                        A.RandomContrast(p=0.5),
                        A.RandomBrightnessContrast(p=0.5),
                    ])
-                   ), batch_size=1, shuffle=True, num_workers=0, pin_memory=False, drop_last=False
+                   ), batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False, drop_last=True
     )
     # 测试集dataloader
     test_loader = torch.utils.data.DataLoader(
@@ -176,7 +176,7 @@ def main():
                        A.HorizontalFlip(p=0.5),
                        A.RandomContrast(p=0.5),
                    ])
-                   ), batch_size=1, shuffle=False, num_workers=1, pin_memory=False, drop_last=False
+                   ), batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False, drop_last=True
     )
     # len(train_loader)得出的结果是batch的数量，必须乘以batch_size才是数据的总数
     train_set_len = len(train_loader) * batch_size
@@ -206,7 +206,7 @@ def main():
     # ---------开始训练/测试---------
     # enumerate返回值结构展示
     print(list(enumerate(train_loader)))
-    epoch = 10
+    epoch = 50
     for e in range(epoch):
         # 设置为训练模型
         rn_module.train()
@@ -251,6 +251,9 @@ def main():
                     # outputs里是一个batch（64张图片）中对于各个图片的预测的数组，targets是正确答案，对比它们的差别就能得出正确率
                     total_accuracy += (outputs.argmax(1) == targets).sum()
             print("整体测试集上的Loss：{}".format(total_test_loss))
+            # if total_accuracy / test_set_len == 0:
+            #     print("total_accuracy:", total_accuracy)
+            #     print("test_set_len:", test_set_len)
             print("整体测试集上的识别正确率：{}".format(total_accuracy / test_set_len))
             # 写入tensorboard展示
             writer.add_scalar("test_lost", total_test_loss, total_test_step)
