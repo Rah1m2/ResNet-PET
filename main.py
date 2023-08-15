@@ -5,6 +5,7 @@
 import os
 import time
 
+import pandas as pd
 import torch
 import glob
 from torch import nn
@@ -17,19 +18,21 @@ from torchvision import models
 from res_net import ResNet
 import nii_dataset
 
+
 # class ResNet(nn.Module):
 #     def __init__(self):
 #         super(ResNet, self).__init__()
-# 
+#
 #         model = models.resnet18(True)
 #         model.conv1 = torch.nn.Conv2d(50, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
 #         model.avgpool = nn.AdaptiveAvgPool2d(1)
 #         model.fc = nn.Linear(512, 2)
 #         self.resnet = model
-# 
+#
 #     def forward(self, img):
 #         out = self.resnet(img)
 #         return out
+
 
 # 选择使用gpu还是cpu进行训练
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -124,20 +127,59 @@ def test():
         print(layer.__class__.__name__, "output shape:\t", X.shape)
 
 
-def main():
-    # ---------初始化tensorboard---------
-    writer = SummaryWriter("logs")
-
-    # ---------加载数据集---------
-    # 数据集路径
+def verification():
+    # ---------初始化---------
+    # 神经网络模型
+    ln_model = ResNet()
+    # 获取保存的参数（没有网络结构）
+    state_dict = torch.load("./models/ResNet_train_mode2_29.pth")
+    # 将参数加载到网络模型中
+    ln_model.load_state_dict(state_dict)
+    # 加载数据集
+    # 数据集相关参数
     train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
     test_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Test\\*")
-    print(train_path[:-10])
-    print(train_path)
-    # 随机打乱
-    np.random.shuffle(train_path)
-    np.random.shuffle(test_path)
-    batch_size = 4
+    batch_size = 64
+    # 读取数据
+    train_dataloader, test_dataloader, train_set_len, test_set_len = read_dataset(train_path, test_path, batch_size)
+    print(test_dataloader)
+    # 初始化tensorboard
+    # writer = SummaryWriter("tensor_img_logs")
+    complete_res = None
+    # ---------循环读取batch---------
+    batch_count = 0
+    for test_data in test_dataloader:
+        imgs, targets = test_data
+        print("shape of imgs:", imgs.shape)
+        print("shape of targets:", targets.shape)
+        # 设置为测试模式
+        ln_model.eval()
+        # 不计算梯度，节省性能
+        with torch.no_grad():
+            res = ln_model(imgs)
+        accuracy = (res.argmax(1) == targets).sum()
+        # 将完整数据的label拼接为数组
+        if complete_res is None:
+            complete_res = res.argmax(1).numpy()
+        else:
+            complete_res = np.append(complete_res, res.argmax(1).numpy())
+        # ---------输出验证结果---------
+        print("result:\n", res)
+        # print("targets:\n", targets)
+        print("prediction:\n", res.argmax(1))
+        print("result comparison:\n", res.argmax(1) == targets)
+        # print("accuracy of this batch:\n", (accuracy / batch_size).item())
+        # writer.add_images("script_batch_{}".format(batch_count), imgs)
+        batch_count += 1
+    # writer.close()
+
+    label = ['MCI' if x == 0 else 'NC' for x in complete_res]
+    # 生成提交csv文件
+    submit(test_path, label)
+
+
+def read_dataset(train_path, test_path, batch_size):
+    """ 下载并创建训练集和测试集并装入dataloader """
     # 训练集dataloader
     train_loader = torch.utils.data.DataLoader(
         nii_dataset.NiiDataset(train_path,
@@ -148,7 +190,7 @@ def main():
                                    A.RandomContrast(p=0.5),
                                    A.RandomBrightnessContrast(p=0.5),
                                ])
-                               ), batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False, drop_last=True
+                               ), batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=False, drop_last=False
     )
     # 测试集dataloader
     test_loader = torch.utils.data.DataLoader(
@@ -158,11 +200,44 @@ def main():
                                    A.HorizontalFlip(p=0.5),
                                    A.RandomContrast(p=0.5),
                                ])
-                               ), batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False, drop_last=True
+                               ), batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=False, drop_last=False
     )
     # len(train_loader)得出的结果是batch的数量，必须乘以batch_size才是数据的总数
     train_set_len = len(train_loader) * batch_size
     test_set_len = len(test_loader) * batch_size
+    # 数据集长度
+    print("训练数据集长度：{}".format(train_set_len))
+    print("测试数据集长度：{}".format(test_set_len))
+    return train_loader, test_loader, train_set_len, test_set_len
+
+
+def submit(test_path, label):
+    submit_df = pd.DataFrame(
+        {
+            'uuid': [int(x.split('\\')[-1][:-4]) for x in test_path],
+            'label': label
+        })
+    submit_df = submit_df.sort_values(by='uuid')
+    # 展示文件内容
+    print(submit_df)
+    # 生成csv文件
+    submit_df.to_csv('submit.csv', index=None)
+
+
+def main():
+    # ---------初始化tensorboard---------
+    writer = SummaryWriter("logs")
+
+    # ---------加载数据集---------
+    # 数据集相关参数
+    train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
+    test_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Test\\*")
+    batch_size = 4
+    # 随机打乱
+    np.random.shuffle(train_path)
+    np.random.shuffle(test_path)
+    # 返回数据集参数
+    train_loader, test_loader, train_set_len, test_set_len = read_dataset(train_path, test_path, batch_size)
 
     # ---------初始化网络---------
     # 神经网络模型
@@ -210,4 +285,5 @@ def main():
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # test()
-    main()
+    # main()
+    verification()
