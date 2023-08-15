@@ -6,10 +6,11 @@ import nibabel as nib
 
 DATA_CACHE = {}
 
+
 class NiiDataset(Dataset):
     classes = [
-        "0 - NC",
-        "1 - MCI",
+        "1 - NC",
+        "0 - MCI",
     ]
 
     def __init__(self, img_path, transform=None):
