@@ -15,6 +15,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import models
 
+import validate
 from res_net import ResNet
 import nii_dataset
 
@@ -33,57 +34,11 @@ import nii_dataset
 #         out = self.resnet(img)
 #         return out
 
-
 # 选择使用gpu还是cpu进行训练
+from train import train
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-def train(train_loader, model, criterion, optimizer, total_train_step):
-    # 总loss
-    loss = None
-    # 训练步数
-    train_step = 0
-    # 设置为训练模型
-    model.train()
-    for enum, (imgs, targets) in enumerate(train_loader):
-        writer = SummaryWriter("logs")
-        # 启用GPU
-        imgs = imgs.to(device)
-        targets = targets.to(device)
-        # 放入模型进行训练
-        outputs = model(imgs)
-        loss = criterion(outputs, targets.long())
-        # 将优化器中的参数设置为0，每批图像进行优化前都要置零
-        optimizer.zero_grad()
-        # 用反向传播获得模型中参数的梯度
-        loss.backward()
-        # 调优
-        optimizer.step()
-        total_train_step += 1
-        if total_train_step % 10 == 0:
-            print("训练次数：{}，Loss：{}".format(total_train_step, loss.item()))
-            writer.add_scalar("train_loss", loss.item(), total_train_step)
-    return loss, total_train_step
-
-
-def validate(val_loader, model, criterion):
-    model.eval()
-
-    val_acc = 0.0
-
-    with torch.no_grad():
-        end = time.time()
-        for i, (input, target) in enumerate(val_loader):
-            input = input.cuda()
-            target = target.cuda()
-
-            # compute output
-            output = model(input)
-            loss = criterion(output, target.long())
-
-            val_acc += (output.argmax(1) == target).sum().item()
-
-    return val_acc / len(val_loader.dataset)
 
 
 def predict(test_loader, model, criterion, total_test_step):
@@ -133,6 +88,7 @@ def verification():
     ln_model = ResNet()
     # 获取保存的参数（没有网络结构）
     state_dict = torch.load("./models/ResNet_train_mode2_29.pth")
+    state_dict = torch.load("./resnet18_fold9.pt")
     # 将参数加载到网络模型中
     ln_model.load_state_dict(state_dict)
     # 加载数据集
@@ -183,10 +139,10 @@ def read_dataset(train_path, test_path, batch_size):
     # 训练集dataloader
     train_loader = torch.utils.data.DataLoader(
         nii_dataset.NiiDataset(train_path,
-                               A.Compose([
-                                   A.RandomRotate90(),
-                                   A.RandomCrop(120, 120),
-                                   A.HorizontalFlip(p=0.5),
+                               A.Compose([  # 这些措施都是为了提供更多的数据，提高模型的识别能力
+                                   A.RandomRotate90(),  # 随机旋转
+                                   A.RandomCrop(120, 120),   # 随机裁剪图片
+                                   A.HorizontalFlip(p=0.5),  # 水平翻转
                                    A.RandomContrast(p=0.5),
                                    A.RandomBrightnessContrast(p=0.5),
                                ])
@@ -221,7 +177,7 @@ def submit(test_path, label):
     # 展示文件内容
     print(submit_df)
     # 生成csv文件
-    submit_df.to_csv('submit.csv', index=None)
+    submit_df.to_csv('submit2.csv', index=None)
 
 
 def main():
@@ -287,3 +243,5 @@ if __name__ == '__main__':
     # test()
     # main()
     verification()
+    # train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
+    # validate.run(train_path)
