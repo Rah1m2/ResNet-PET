@@ -37,7 +37,7 @@ class NiiDataset(Dataset):
         # img -= 1
 
         # print(img.shape)
-        if self.transform is not None:
+        if self.transform is not None and self.transform is not Ellipsis:
             img = self.transform(image=img)['image']  # 用A进行transform之后返回一个字典，有两个属性，其中一个image属性就是图片
 
         img = img.transpose([2, 0, 1])
