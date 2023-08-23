@@ -1,10 +1,6 @@
-# This is a sample Python script.
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+import argparse
 import os
 import time
-
 import pandas as pd
 import torch
 import glob
@@ -13,125 +9,40 @@ import numpy as np
 import albumentations as A
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torchvision import models
 
-import validate
+import cross_validate as train
 from res_net import ResNet
 import nii_dataset
 
-
-# class ResNet(nn.Module):
-#     def __init__(self):
-#         super(ResNet, self).__init__()
-#
-#         model = models.resnet18(True)
-#         model.conv1 = torch.nn.Conv2d(50, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-#         model.avgpool = nn.AdaptiveAvgPool2d(1)
-#         model.fc = nn.Linear(512, 2)
-#         self.resnet = model
-#
-#     def forward(self, img):
-#         out = self.resnet(img)
-#         return out
-
 # 选择使用gpu还是cpu进行训练
-from train import train
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def predict(test_loader, model, criterion, total_test_step):
     writer = SummaryWriter("logs")
     # 设置为测试模型
     model.eval()
+    test_pred = []
     total_accuracy = 0
     with torch.no_grad():
         for data in test_loader:
             imgs, targets = data
-            # 启用GPU
-            imgs = imgs.to(device)
-            targets = targets.to(device)
+            imgs = imgs.to(DEVICE)
+            targets = targets.to(DEVICE)
             outputs = model(imgs)
+            outputs = outputs.to(DEVICE)
+            # 返回损失值
             loss = criterion(outputs, targets.long())
+            # 准确率
             total_accuracy += (outputs.argmax(1) == targets).sum()
+            # 将二分类预测结果整合起来
+            test_pred.append(outputs.data.cpu().numpy())
             # 测试集Loss以及预测正确率
-        print("测试集Loss：{}".format(loss))
-        # 写入tensorboard展示
-        writer.add_scalar("test_lost", loss, total_test_step)
-        writer.close()
-    return loss, total_accuracy
-
-
-def test():
-    test_list = [1, 2, 3, 4, 5]
-    print(*test_list)
-
-    # enumerate返回值结构展示
-    for i, (ob1, ob2) in enumerate([['img', 'target'], ['civilian', 'combine']]):
-        print("enum test:")
-        print(ob1)
-        print(ob2)
-        print(i)
-
-    # 每层网络shape
-    X = torch.rand(size=(1, 1, 224, 224), dtype=torch.float32)
-    rn_net = ResNet()
-    for layer in rn_net.sequential:
-        X = layer(X)
-        print(layer.__class__.__name__, "output shape:\t", X.shape)
-
-
-def verification():
-    # ---------初始化---------
-    # 神经网络模型
-    ln_model = ResNet()
-    # 获取保存的参数（没有网络结构）
-    state_dict = torch.load("./models/ResNet_train_mode2_29.pth")
-    state_dict = torch.load("./resnet18_fold9.pt")
-    # 将参数加载到网络模型中
-    ln_model.load_state_dict(state_dict)
-    # 加载数据集
-    # 数据集相关参数
-    train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
-    test_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Test\\*")
-    batch_size = 64
-    # 读取数据
-    train_dataloader, test_dataloader, train_set_len, test_set_len = read_dataset(train_path, test_path, batch_size)
-    print(test_dataloader)
-    # 初始化tensorboard
-    # writer = SummaryWriter("tensor_img_logs")
-    complete_res = None
-    # ---------循环读取batch---------
-    batch_count = 0
-    for test_data in test_dataloader:
-        imgs, targets = test_data
-        print("shape of imgs:", imgs.shape)
-        print("shape of targets:", targets.shape)
-        # 设置为测试模式
-        ln_model.eval()
-        # 不计算梯度，节省性能
-        with torch.no_grad():
-            res = ln_model(imgs)
-        accuracy = (res.argmax(1) == targets).sum()
-        # 将完整数据的label拼接为数组
-        if complete_res is None:
-            complete_res = res.argmax(1).numpy()
-        else:
-            complete_res = np.append(complete_res, res.argmax(1).numpy())
-        # ---------输出验证结果---------
-        print("result:\n", res)
-        # print("targets:\n", targets)
-        print("prediction:\n", res.argmax(1))
-        print("result comparison:\n", res.argmax(1) == targets)
-        # print("accuracy of this batch:\n", (accuracy / batch_size).item())
-        # writer.add_images("script_batch_{}".format(batch_count), imgs)
-        batch_count += 1
+            # print("测试集Loss：{}".format(loss))
+            # 写入tensorboard展示
+            # writer.add_scalar("test_lost", loss, total_test_step)
     # writer.close()
-
-    label = ['MCI' if x == 0 else 'NC' for x in complete_res]
-    # 生成提交csv文件
-    submit(test_path, label)
+    return loss, total_accuracy, np.vstack(test_pred)
 
 
 def read_dataset(train_path, test_path, batch_size):
@@ -141,7 +52,7 @@ def read_dataset(train_path, test_path, batch_size):
         nii_dataset.NiiDataset(train_path,
                                A.Compose([  # 这些措施都是为了提供更多的数据，提高模型的识别能力
                                    A.RandomRotate90(),  # 随机旋转
-                                   A.RandomCrop(120, 120),   # 随机裁剪图片
+                                   A.RandomCrop(120, 120),  # 随机裁剪图片
                                    A.HorizontalFlip(p=0.5),  # 水平翻转
                                    A.RandomContrast(p=0.5),
                                    A.RandomBrightnessContrast(p=0.5),
@@ -152,7 +63,7 @@ def read_dataset(train_path, test_path, batch_size):
     test_loader = torch.utils.data.DataLoader(
         nii_dataset.NiiDataset(test_path,
                                A.Compose([
-                                   A.RandomCrop(128, 128),
+                                   A.RandomCrop(120, 120),
                                    A.HorizontalFlip(p=0.5),
                                    A.RandomContrast(p=0.5),
                                ])
@@ -167,7 +78,47 @@ def read_dataset(train_path, test_path, batch_size):
     return train_loader, test_loader, train_set_len, test_set_len
 
 
-def submit(test_path, label):
+def generate():
+    # ---------加载数据集---------
+    # 数据集相关参数
+    train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
+    test_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Test\\*")
+    batch_size = 64
+    total_test_step = 0
+    label = None
+    # 损失函数
+    loss_func = nn.CrossEntropyLoss()
+    loss_func = loss_func.to(DEVICE)
+
+    # ---------读取数据---------
+    train_dataloader, test_dataloader, train_set_len, test_set_len = read_dataset(train_path, test_path, batch_size)
+
+    # ---------测试集增强，对于10个权重模型依次进行10轮预测，最后将结果相加---------
+    pred = None
+    for model_path in ['resnet18_fold0.pt', 'resnet18_fold1.pt', 'resnet18_fold2.pt',
+                       'resnet18_fold3.pt', 'resnet18_fold4.pt', 'resnet18_fold5.pt',
+                       'resnet18_fold6.pt', 'resnet18_fold7.pt', 'resnet18_fold8.pt',
+                       'resnet18_fold9.pt']:
+        model = ResNet()
+        model = model.to(DEVICE)
+        model.load_state_dict(torch.load(model_path))
+        for _ in range(10):
+            test_loss, total_accuracy, test_pred = predict(test_dataloader, model, loss_func, total_test_step)
+            if pred is None:
+                pred = test_pred
+            else:
+                pred += test_pred
+            label = pred.argmax(1)
+
+    # 将label由索引转换为对应字符
+    label = ['MCI' if x == 0 else 'NC' for x in label]
+
+    # ---------生成提交csv文件---------
+    file_name = "submit_test9.csv"
+    submit(file_name, test_path, label)
+
+
+def submit(file_name, test_path, label):
     submit_df = pd.DataFrame(
         {
             'uuid': [int(x.split('\\')[-1][:-4]) for x in test_path],
@@ -177,71 +128,29 @@ def submit(test_path, label):
     # 展示文件内容
     print(submit_df)
     # 生成csv文件
-    submit_df.to_csv('submit2.csv', index=None)
+    submit_df.to_csv(file_name, index=None)
 
 
-def main():
-    # ---------初始化tensorboard---------
-    writer = SummaryWriter("logs")
-
-    # ---------加载数据集---------
-    # 数据集相关参数
-    train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
-    test_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Test\\*")
-    batch_size = 4
-    # 随机打乱
-    np.random.shuffle(train_path)
-    np.random.shuffle(test_path)
-    # 返回数据集参数
-    train_loader, test_loader, train_set_len, test_set_len = read_dataset(train_path, test_path, batch_size)
-
-    # ---------初始化网络---------
-    # 神经网络模型
-    rn_model = ResNet()
-    rn_model = rn_model.to(device)
-    # 损失函数，使用GPU进行训练
-    loss_func = nn.CrossEntropyLoss()
-    loss_func = loss_func.to(device)
-    # 优化器
-    learning_rate = 0.001
-    # optimizer = torch.optim.SGD(rn_model.parameters(), lr=learning_rate)
-    optimizer = torch.optim.AdamW(rn_model.parameters(), lr=learning_rate)
-
-    # ---------初始化训练相关参数---------
-    # 训练次数
-    total_train_step = 0
-    # 测试的次数
-    total_test_step = 0
-    # 训练的轮数
-    epoch = 30
-    # 神经网络识别总正确率
-    total_accuracy = 0
-
-    # ---------训练/测试---------
-    for e in range(epoch):
-        # ---------训练步骤---------
-        print("-----第{}轮训练-----".format(e + 1))
-        train_loss, total_train_step = train(train_loader, rn_model, loss_func, optimizer, total_train_step)
-        # ---------测试步骤---------
-        print("-----第{}轮测试-----".format(e + 1))
-        test_loss, total_accuracy = predict(test_loader, rn_model, loss_func, total_test_step)
-        # 测试集预测正确率
-        print("整体测试集上的识别正确率：{}".format(total_accuracy / test_set_len))
-        # 步数+1
-        total_train_step += 1
-        total_test_step += 1
-        # 保存模型，方式1
-        torch.save(rn_model, "./models/ResNet_train_mode1_{}.pth".format(e))
-        # 保存模型,方式2
-        torch.save(rn_model.state_dict(), "./models/ResNet_train_mode2_{}.pth".format(e))
-
-    writer.close()
+def parse_opt():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--train-path', type=str,
+                        default="D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*",
+                        help='dataset path')
+    parser.add_argument('--batch-size', type=int, default=4, help='batch size')
+    parser.add_argument('--learning-rate', type=float, default=0.001, help='learning rate')
+    # parser.add_argument('--train-transforms', type=str, required=True, help='train transforms')
+    # parser.add_argument('--val-transforms', type=str, required=True, help='val transforms')
+    opt = parser.parse_args()
+    return opt
 
 
-# Press the green button in the gutter to run the script.
+def main(opt):
+    # 进行训练以及交叉验证
+    train.run(opt)
+    # 对测试集进行预测并生成预测csv
+    generate()
+
+
 if __name__ == '__main__':
-    # test()
-    # main()
-    verification()
-    # train_path = glob.glob("D:\\xuexi\\post-graduate\\py_projects\\ResNet-PET\\datasets\\Brain-PET\\Train\\*\\*")
-    # validate.run(train_path)
+    opt = parse_opt()
+    main(opt)
