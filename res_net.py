@@ -46,7 +46,7 @@ class ResNet(nn.Module):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        b0 = Sequential(nn.Conv2d(50, 64, (7, 7), (2, 2), padding=3),
+        b0 = Sequential(nn.Conv2d(47, 64, (7, 7), (2, 2), padding=3),
                         BatchNorm2d(64),
                         ReLU(),
                         MaxPool2d((3, 3), 2, 1))
